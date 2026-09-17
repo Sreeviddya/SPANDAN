@@ -372,6 +372,13 @@ const forgotPasswordIpLimiter = rateLimit({
   // skip-successful limiter would never throttle anything (the original "unlimited" flaw).
   max: Number(process.env.FORGOT_PW_LIMIT_PER_IP) || 3, // per IP per hour
   standardHeaders: true,
+  // Local development: don't throttle the developer's own machine. Loopback IPs are always exempt,
+  // and FORGOT_PW_TRUSTED_IPS (comma-separated) can extend that to other IPs (e.g. an office IP).
+  skip: (req) => {
+    const ip = (req.ip || '').replace(/^::ffff:/, '')
+    const trusted = (process.env.FORGOT_PW_TRUSTED_IPS || '').split(',').map((s) => s.trim()).filter(Boolean)
+    return ip === '127.0.0.1' || ip === '::1' || trusted.includes(ip)
+  },
   message: { error: 'Too many password reset requests from this device. Please try again later.' }
 })
 
