@@ -1,6 +1,6 @@
 import express from 'express'
-import { register, login, getUserById, checkEmailExists, updateProfile, resetOwnPassword } from '../services/authService.js'
-import { generateResetToken, verifyResetToken, resetPassword } from '../services/passwordService.js'
+import { register, login, getUserById, getUserByEmail, checkEmailExists, updateProfile, resetOwnPassword } from '../services/authService.js'
+import { generateResetToken, verifyResetToken, resetPassword, recordPasswordResetRequest } from '../services/passwordService.js'
 import { sendResetPasswordEmail } from '../services/emailService.js'
 import { generateToken } from '../middleware/auth.js'
 import { validate, sendOtpSchema, verifyRegistrationSchema, loginSchema } from '../middleware/validation.js'
@@ -130,31 +130,37 @@ router.get('/me', authenticate, async (req, res) => {
 router.post('/forgot-password', async (req, res) => {
   try {
     const { email } = req.body
-    
+
     if (!email) {
       return res.status(400).json({ error: 'Email is required' })
     }
-    
-    // Check if user exists
-    const user = await checkEmailExists(email)
-    if (!user) {
-      // Don't reveal whether email exists for security
-      return res.json({ message: 'If an account exists with this email, a reset link has been sent.' })
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ error: 'Please enter a valid email address' })
     }
-    
-    // Get user object for the email
-    const { getUserByEmail } = await import('../services/authService.js')
+
+    // Check if it's a registered, valid account first
     const userObj = await getUserByEmail(email)
-    
-    // Generate reset token
+    if (!userObj || userObj.isActive === false) {
+      return res.status(404).json({ error: 'No account found with this email address. Please check and try again.' })
+    }
+
+    // Per-email throttle (cooldown + 5/hour cap). Only reached for registered emails.
+    await recordPasswordResetRequest(email)
+
     const token = await generateResetToken(email)
-    
-    // Send reset email
     await sendResetPasswordEmail(email, token)
-    
-    res.json({ message: 'If an account exists with this email, a reset link has been sent.' })
+
+    res.json({ message: 'A password reset link has been sent to your email.' })
   } catch (error) {
-    console.error('Forgot password error:', error)
+    const status = (error.code === 'COOLDOWN' || error.code === 'SEND_CAP') ? 429 : 500
+    if (status === 429) {
+      return res.status(429).json({
+        error: error.message,
+        code: error.code,
+        retryAfterSec: error.retryAfterSec
+      })
+    }
     res.status(500).json({ error: 'Failed to process request' })
   }
 })

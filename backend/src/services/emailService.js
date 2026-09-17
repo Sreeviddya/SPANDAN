@@ -119,6 +119,12 @@ export const sendResetPasswordEmail = async (email, token) => {
     console.log(`Reset email sent to ${email}`)
     return true
   } catch (error) {
+    // Dev/no-provider fallback: print the reset link instead of failing, so the flow is fully
+    // testable locally without SMTP/email API credentials.
+    if (!config.emailApiKey && !config.smtpPassword && config.nodeEnv !== 'production') {
+      console.log(`[DEV] Password reset for ${email} (no email provider configured):\n${resetUrl}`)
+      return true
+    }
     console.error(`Failed to send reset email to ${email}:`, error.message)
     throw new Error('Failed to send reset email')
   }
@@ -165,6 +171,10 @@ export const sendRegistrationOtp = async (email, name, otp) => {
     console.log(`OTP email sent to ${email}`)
     return true
   } catch (error) {
+    if (!config.emailApiKey && !config.smtpPassword && config.nodeEnv !== 'production') {
+      console.log(`[DEV] Verification code for ${email} (no email provider configured):\n${otp}`)
+      return true
+    }
     console.error(`Failed to send OTP email to ${email}:`, error.message)
     throw new Error('Failed to send verification code')
   }

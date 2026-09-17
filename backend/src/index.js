@@ -363,6 +363,18 @@ const otpLimiter = rateLimit({
   message: { error: 'Too many verification requests, please try again later' }
 })
 
+const forgotPasswordIpLimiter = rateLimit({
+  store: rlStore('rl:fpip:'),
+  // FORGOT_PW_LIMIT_WINDOW_MS mirrors the per-email window (default 1 hour) so both caps reset together.
+  windowMs: Number(process.env.FORGOT_PW_LIMIT_WINDOW_MS) || 3600000, // 1 hour
+  // Reset links trigger real emails. Unlike authLimiter (skipSuccessfulRequests), this counts EVERY
+  // attempt — the route always returns 200 for both registered and unregistered emails, so a
+  // skip-successful limiter would never throttle anything (the original "unlimited" flaw).
+  max: Number(process.env.FORGOT_PW_LIMIT_PER_IP) || 3, // per IP per hour
+  standardHeaders: true,
+  message: { error: 'Too many password reset requests from this device. Please try again later.' }
+})
+
 // Middleware
 app.use(helmet())
 app.use(cors({
@@ -372,6 +384,7 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }))
 app.use('/api/', apiLimiter)           // general /api/ routes
 app.use('/api/auth/', authLimiter)     // auth routes
+app.use('/api/auth/forgot-password', forgotPasswordIpLimiter)  // 3/IP/hour backstop for reset emails
 app.use('/api/auth/register/send-otp', otpLimiter)  // stricter cap on the email-sending step
 app.use('/api/responses/', responseLimiter)  // response submission routes
 app.use('/api/responses/leaderboard/', leaderboardLimiter)  // leaderboard routes (high limit for live sessions)

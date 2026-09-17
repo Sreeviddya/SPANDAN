@@ -46,6 +46,7 @@ function AuthPage() {
   const [forgotPasswordEmail, setForgotPasswordEmail] = useState('')
   const [forgotPasswordMsg, setForgotPasswordMsg] = useState('')
   const [forgotPasswordLoading, setForgotPasswordLoading] = useState(false)
+  const [forgotPasswordCooldown, setForgotPasswordCooldown] = useState(0)
   const [showPasswordReqs, setShowPasswordReqs] = useState(false)
   // Email-OTP registration step: after the form is submitted we send a code and switch to OTP entry.
   const [otpSent, setOtpSent] = useState(false)
@@ -68,6 +69,14 @@ function AuthPage() {
     const t = setTimeout(() => setResendIn(resendIn - 1), 1000)
     return () => clearTimeout(t)
   }, [resendIn])
+
+  // Tick down the forgot-password cooldown once per second so the "please wait" message
+  // counts down live instead of showing a frozen number.
+  useEffect(() => {
+    if (forgotPasswordCooldown <= 0) return
+    const t = setTimeout(() => setForgotPasswordCooldown(forgotPasswordCooldown - 1), 1000)
+    return () => clearTimeout(t)
+  }, [forgotPasswordCooldown])
 
   const getPasswordReqs = (password) => {
     if (password == null) return PASSWORD_REQUIREMENTS.map(req => ({ ...req, met: false }))
@@ -194,6 +203,7 @@ function AuthPage() {
 
   const handleForgotPassword = async (e) => {
     e.preventDefault()
+    if (forgotPasswordCooldown > 0) return
     setForgotPasswordMsg('')
     setForgotPasswordLoading(true)
     try {
@@ -203,15 +213,32 @@ function AuthPage() {
         body: JSON.stringify({ email: forgotPasswordEmail })
       })
       const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Failed to send reset email')
+      if (!res.ok) {
+        const err = new Error(data.error || 'Failed to send reset email')
+        err.code = data.code
+        err.retryAfterSec = Number(data.retryAfterSec) || 0
+        throw err
+      }
+      setForgotPasswordCooldown(0)
       setForgotPasswordMsg('✓ Password reset link sent! Check your email.')
       setForgotPasswordEmail('')
     } catch (err) {
-      setForgotPasswordMsg(err.message)
+      // On the resend cooldown, drive a live countdown so the wait time ticks down on screen.
+      if (err.code === 'COOLDOWN' && err.retryAfterSec > 0) {
+        setForgotPasswordCooldown(err.retryAfterSec)
+      } else {
+        setForgotPasswordMsg(err.message)
+      }
     } finally {
       setForgotPasswordLoading(false)
     }
   }
+
+  // Live forgot-password message: while on cooldown show the ticking seconds; otherwise the server text.
+  const forgotMsgText = forgotPasswordCooldown > 0
+    ? `Please wait ${forgotPasswordCooldown}s before requesting another reset link.`
+    : forgotPasswordMsg
+  const forgotMsgIsError = forgotPasswordCooldown > 0 || !forgotPasswordMsg.startsWith('✓')
 
   // Full-page brand gradient — theme-aware, so the ENTIRE auth page is one blue wash
   // (deep navy in dark mode). Both the branding column and the form card sit on top of it.
@@ -550,35 +577,39 @@ function AuthPage() {
                   onBlur={handleInputBlur}
                 />
               </div>
-              {forgotPasswordMsg && (
+              {forgotMsgText && (
                 <div style={{
-                  background: forgotPasswordMsg.startsWith('✓')
-                    ? (isDark ? 'rgba(16,185,129,0.15)' : '#ecfdf5')
-                    : (isDark ? 'rgba(239,68,68,0.15)' : '#fef2f2'),
-                  border: `1px solid ${forgotPasswordMsg.startsWith('✓')
-                    ? (isDark ? 'rgba(16,185,129,0.3)' : '#6ee7b7')
-                    : (isDark ? 'rgba(239,68,68,0.3)' : '#fecaca')}`,
+                  background: forgotMsgIsError
+                    ? (isDark ? 'rgba(239,68,68,0.15)' : '#fef2f2')
+                    : (isDark ? 'rgba(16,185,129,0.15)' : '#ecfdf5'),
+                  border: `1px solid ${forgotMsgIsError
+                    ? (isDark ? 'rgba(239,68,68,0.3)' : '#fecaca')
+                    : (isDark ? 'rgba(16,185,129,0.3)' : '#6ee7b7')}`,
                   borderRadius: 'var(--radius-sm)',
                   padding: '12px 16px',
                   marginBottom: '20px',
-                  color: forgotPasswordMsg.startsWith('✓')
-                    ? (isDark ? '#6ee7b7' : '#059669')
-                    : (isDark ? '#fca5a5' : '#dc2626'),
+                  color: forgotMsgIsError
+                    ? (isDark ? '#fca5a5' : '#dc2626')
+                    : (isDark ? '#6ee7b7' : '#059669'),
                   fontSize: '14px'
                 }}>
-                  {forgotPasswordMsg}
+                  {forgotMsgText}
                 </div>
               )}
               <button
                 type="submit"
-                disabled={forgotPasswordLoading}
-                style={primaryButtonStyle(forgotPasswordLoading)}
+                disabled={forgotPasswordLoading || forgotPasswordCooldown > 0}
+                style={primaryButtonStyle(forgotPasswordLoading || forgotPasswordCooldown > 0)}
               >
-                {forgotPasswordLoading ? 'Sending...' : 'Send Reset Link'}
+                {forgotPasswordLoading
+                  ? 'Sending...'
+                  : forgotPasswordCooldown > 0
+                    ? `Resend in ${forgotPasswordCooldown}s`
+                    : 'Send Reset Link'}
               </button>
               <button
                 type="button"
-                onClick={() => { setShowForgotPassword(false); setForgotPasswordMsg('') }}
+                onClick={() => { setShowForgotPassword(false); setForgotPasswordMsg(''); setForgotPasswordCooldown(0) }}
                 style={{
                   width: '100%',
                   marginTop: '12px',

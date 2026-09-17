@@ -126,6 +126,9 @@ function RoomDetailPage() {
       if (segmentTimerRef.current) {
         clearInterval(segmentTimerRef.current)
       }
+      if (questionTimerRef.current) {
+        clearInterval(questionTimerRef.current)
+      }
       genAbortRef.current?.abort() // stop any in-flight generation poll
     }
   }, [roomId])
@@ -175,8 +178,8 @@ function RoomDetailPage() {
   useEffect(() => {
     if (!socket) return
 
-  const startQuestionTimer = (question) => {
-    const timeToAnswer = question.timeToAnswer || roomSettings.timeToAnswer || 30
+  const startQuestionTimer = (question, timeToAnswer, startTime) => {
+    const tta = Number(timeToAnswer) || question?.timeToAnswer || roomSettings.timeToAnswer || 30
 
     // Clear any existing timer
     if (questionTimerRef.current) {
@@ -184,24 +187,34 @@ function RoomDetailPage() {
       questionTimerRef.current = null
     }
 
+    // Account for time already elapsed since the question was launched server-side, so the
+    // countdown reflects the true remaining time (e.g. if the event arrived late).
+    let secondsLeft = tta
+    if (startTime && Number.isFinite(Number(startTime))) {
+      const elapsed = Math.floor((Date.now() - Number(startTime)) / 1000)
+      secondsLeft = Math.max(0, secondsLeft - elapsed)
+    }
+
     setActiveQuestion(question)
-    setQuestionTimeLeft(timeToAnswer)
+    setQuestionTimeLeft(secondsLeft)
+
+    if (secondsLeft <= 0) return
 
     questionTimerRef.current = setInterval(() => {
-      setQuestionTimeLeft(prev => {
-        if (prev <= 1) {
-          clearInterval(questionTimerRef.current)
-          questionTimerRef.current = null
-          setActiveQuestion(null)
-          return 0
-        }
-        return prev - 1
-      })
+      secondsLeft -= 1
+      setQuestionTimeLeft(secondsLeft)
+      if (secondsLeft <= 0) {
+        clearInterval(questionTimerRef.current)
+        questionTimerRef.current = null
+      }
     }, 1000)
   }
 
   const handleQuestionLaunched = (data) => {
-    console.log('[QUESTION LAUNCHED]', data)
+    const question = data?.question || data
+    if (!question) return
+    const timer = data?.timer ?? question?.timeToAnswer
+    startQuestionTimer(question, timer, data?.startTime)
   }
 
     socket.on('new_question', handleQuestionLaunched)
