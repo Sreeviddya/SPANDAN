@@ -30,10 +30,49 @@ export function installAuthFetchInterceptor() {
   const originalFetch = window.fetch.bind(window)
 
   window.fetch = async (...args) => {
-    const response = await originalFetch(...args)
+    const isOurs = isOurApiUrl(args[0])
+
+    let response
     try {
-      if (response.status === 401 && isOurApiUrl(args[0]) && useAuthStore.getState().token) {
-        useAuthStore.getState().handleSessionExpired()
+      response = await originalFetch(...args)
+    } catch (err) {
+      // Network-level failure (backend restarting, server down, proxy refused). Raw fetches would
+      // surface a cryptic "Failed to fetch" (or, via a proxy that answers with an empty body, the
+      // "Unexpected end of JSON input" when a caller does res.json()). Turn it into a structured
+      // JSON error response so every call site gets a friendly message instead. Only for OUR API —
+      // cross-origin probes (e.g. the Samagama SSO check) must see the real failure.
+      if (isOurs) {
+        return new Response(JSON.stringify({ error: 'Cannot reach the server. Please check your connection and try again.' }), {
+          status: 503,
+          statusText: 'Service Unavailable',
+          headers: { 'Content-Type': 'application/json' }
+        })
+      }
+      throw err
+    }
+
+    try {
+      if (isOurs) {
+        if (response.status === 401 && useAuthStore.getState().token) {
+          useAuthStore.getState().handleSessionExpired()
+        }
+        // A failing response with an EMPTY body (e.g. the dev proxy answers 500/502 with zero bytes
+        // while the backend is restarting). Callers unconditionally res.json() that, and the raw
+        // TypeError ends up in the UI. Detect and replace it with a JSON error payload so the error
+        // shown is friendly and the parse never throws.
+        if (!response.ok && !response.bodyUsed) {
+          const text = await response.clone().text()
+          if (text === '') {
+            const error = (response.status === 502 || response.status === 503 || response.status === 504)
+              ? 'The server is temporarily unavailable. Please try again.'
+              : 'Something went wrong. Please try again.'
+            return new Response(JSON.stringify({ error }), {
+              status: response.status,
+              statusText: response.statusText,
+              headers: { 'Content-Type': 'application/json' }
+            })
+          }
+        }
       }
     } catch {
       // Never let interceptor bookkeeping break the caller's response.

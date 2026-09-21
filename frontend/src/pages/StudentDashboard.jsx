@@ -18,6 +18,7 @@ function StudentDashboard() {
   
   const [roomCode, setRoomCode] = useState('')
   const [isJoining, setIsJoining] = useState(false)
+  const [joinError, setJoinError] = useState('')
   const [stats, setStats] = useState({
     totalRooms: 0,
     pollsTaken: 0,
@@ -55,6 +56,7 @@ function StudentDashboard() {
   const handleJoinRoom = async () => {
     if (!roomCode.trim()) return
     setIsJoining(true)
+    setJoinError('')
     try {
       // First validate the room exists via API
       const room = await joinRoomByCode(roomCode.trim().toUpperCase())
@@ -63,6 +65,13 @@ function StudentDashboard() {
       // Then navigate to session
       navigate(`/student/session/${room.code}`)
     } catch (err) {
+      if (err.message === 'Room not found') {
+        setJoinError('Invalid room code. Please check the code and try again.')
+      } else if (err.message === 'This room has ended and can no longer be joined') {
+        setJoinError('This room has ended and can no longer be joined.')
+      } else {
+        setJoinError('Failed to join room. Please check the code and try again.')
+      }
       console.error('Failed to join room:', err)
     } finally {
       setIsJoining(false)
@@ -199,7 +208,10 @@ function StudentDashboard() {
               <input
                 type="text"
                 value={roomCode}
-                onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
+                onChange={(e) => {
+                  setRoomCode(e.target.value.toUpperCase())
+                  setJoinError('')
+                }}
                 placeholder="Enter room code..."
                 maxLength={8}
                 style={{
@@ -237,6 +249,21 @@ function StudentDashboard() {
                 {isJoining ? 'Joining...' : 'Join Room'}
               </button>
             </div>
+
+            {joinError && (
+              <div style={{
+                background: 'rgba(220,38,38,0.08)',
+                border: '1px solid rgba(220,38,38,0.3)',
+                borderRadius: 'var(--radius-sm)',
+                padding: '12px 14px',
+                marginTop: '14px',
+                color: '#dc2626',
+                fontSize: '14px',
+                lineHeight: 1.4
+              }}>
+                {joinError}
+              </div>
+            )}
           </div>
 
           {/* Active Joined Rooms Section */}
